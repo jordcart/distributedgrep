@@ -38,7 +38,7 @@ func Map(filename string, contents string) []mr.KeyValue {
 // map tasks, with a list of all the values created for that key by
 // any map task.
 //
-func Reduce(key string, values []mr.KeyValue) string {
+func Reduce(key string, values []string) string {
 	// return the number of occurrences of this word.
 	return strconv.Itoa(len(values))
 }

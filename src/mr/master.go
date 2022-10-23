@@ -4,6 +4,7 @@ import "log"
 import "net"
 import "os"
 import "fmt"
+import "time"
 import "sync"
 import "errors"
 import "net/rpc"
@@ -32,7 +33,7 @@ type Master struct {
 	MapTasksDone    int
 	ReduceTaskCount int
 	ReduceTasksDone int
-	mu              sync.Mutex
+	mu              sync.RWMutex
 }
 
 func (m *Master) GetTask(args *ExampleArgs, reply *RequestTaskReply) error {
@@ -53,6 +54,8 @@ func (m *Master) GetTask(args *ExampleArgs, reply *RequestTaskReply) error {
 				m.MapTaskCount++
 				m.mu.Unlock()
 				reply.CurMapIndex = m.MapTaskCount
+
+				go m.taskTimer("map", i)
 				break
 			}
 		}
@@ -70,6 +73,7 @@ func (m *Master) GetTask(args *ExampleArgs, reply *RequestTaskReply) error {
 				m.ReduceTaskCount++
 				m.mu.Unlock()
 				reply.CurReduceIndex = m.ReduceTaskCount
+				go m.taskTimer("reduce", i)
 				break
 			}
 		}
@@ -87,8 +91,7 @@ func (m *Master) ReportFinishedTask(args *FinishedTaskArgs, reply *ExampleReply)
 	if args.TaskType == "map" {
 		m.mu.Lock()
 		for i, file := range args.FilesArray {
-			fmt.Println(i, file)
-			m.reduceTasks[i].files = append(m.reduceTasks[i].files, file) 
+			m.reduceTasks[i].files = append(m.reduceTasks[i].files, file)
 		}
 
 		m.MapTasksDone++
@@ -104,8 +107,37 @@ func (m *Master) ReportFinishedTask(args *FinishedTaskArgs, reply *ExampleReply)
 	return nil
 }
 
-func (m *Master) taskTimer() {
-	// todo
+func (m *Master) taskTimer(taskType string, taskNumber int) {
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <- timer.C:
+			m.mu.Lock()
+			fmt.Println("times up")
+			if taskType == "map" {
+				m.mapTasks[taskNumber].state = "idle"
+			} else if taskType == "reduce" {
+				m.reduceTasks[taskNumber].state = "idle"
+			}
+			m.mu.Unlock()
+
+		// timer is not finished
+		default:
+			if taskType == "map" {
+				// if this task is finished we can stop polling
+				if m.mapTasks[taskNumber].state == "finished" {
+					return
+				}
+			} else if taskType == "reduce" {
+				// if this task is finished we can stop polling
+				if m.reduceTasks[taskNumber].state == "finished" {
+					return
+				}
+			}
+		}
+	}
 }
 
 //
@@ -139,7 +171,6 @@ func (m *Master) Done() bool {
 }
 
 //
-// create a Master.
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
 //

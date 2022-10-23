@@ -68,7 +68,16 @@ func workerMap(reply RequestTaskReply, mapf func(string, string) []KeyValue) {
 	sendFinishedToMaster(args)
 }
 
-func workerReduce(reply RequestTaskReply, reducef func(string, []KeyValue) string) {
+func makeKeyArrayFromKeyValue(keyVal []KeyValue, start int, end int) []string {
+	ret := make([]string, 0, end-start+1)
+	for i := start; i < end; i++ {
+		ret = append(ret, keyVal[i].Key)
+	}
+
+	return ret
+}
+
+func workerReduce(reply RequestTaskReply, reducef func(string, []string) string) {
 	interKeyVal	:= []KeyValue{}
 	for _, filename := range reply.ReduceFileList {
 		temp := ReadJSONFromFile(filename)
@@ -85,14 +94,16 @@ func workerReduce(reply RequestTaskReply, reducef func(string, []KeyValue) strin
 
 	for i, cur := range interKeyVal {
 		if cur.Key != prev && prev != "" {
-			num := reducef(prev, interKeyVal[start:i])
+			stringArray := makeKeyArrayFromKeyValue(interKeyVal, start, i)
+			num := reducef(prev, stringArray)
 			fmt.Fprintf(outputFile, "%v %v\n", prev, num)
 			start = i
 		}
 		prev = cur.Key
 	}
 
-	num := reducef(prev, interKeyVal[start:])
+	stringArray := makeKeyArrayFromKeyValue(interKeyVal, start, len(interKeyVal))
+	num := reducef(prev, stringArray)
 	fmt.Fprintf(outputFile, "%v %v\n", prev, num)
 
 	args := FinishedTaskArgs{nil, reply.TaskNumber, "reduce"}
@@ -104,21 +115,16 @@ func workerReduce(reply RequestTaskReply, reducef func(string, []KeyValue) strin
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []KeyValue) string) {
-
-	// Your worker implementation here.
+	reducef func(string, []string) string) {
 
 	for {
 		reply := CallGetTask()
-		// sleep and continue loop from top if there was no tasks available
-
 		if reply.TaskType == "map" {
-			fmt.Println("Received map task")
 			workerMap(reply, mapf)
 		} else if reply.TaskType == "reduce" {
-			fmt.Println("Received reduce task")
 			workerReduce(reply, reducef)
 		} else if reply.TaskType == "sleep" {
+			// sleep and continue loop from top if there was no tasks available
 			time.Sleep(5 * time.Second)
 			continue
 		} else if reply.TaskType == "exit" {
@@ -127,13 +133,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 }
 
-//
-// example function to show how to make an RPC call to the master.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
 func CallGetTask() RequestTaskReply {
-
 	// declare an argument and reply structure.
 	args := ExampleArgs{}
 	reply := RequestTaskReply{}
@@ -141,6 +141,7 @@ func CallGetTask() RequestTaskReply {
 	// send the RPC request, wait for the reply.
 	ret := call("Master.GetTask", &args, &reply)
 
+	// if no tasks, return an object telling worker process to sleep
 	if !ret {
 		return RequestTaskReply{"", nil, "sleep", 0, 0, 0, 0}
 	}
@@ -172,10 +173,9 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 }
 
 func sendFinishedToMaster(args FinishedTaskArgs) {
-	// declare an argument and reply structure.
 	reply := ExampleReply{}
 
-	call("Master.ReportFinishedTask", args, reply)
+	call("Master.ReportFinishedTask", &args, &reply)
 }
 
 func WriteJSONToFile(filename string, keyValArray []KeyValue) {

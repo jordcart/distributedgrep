@@ -40,7 +40,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func workerMap(reply RequestTaskReply, mapf func(string, string) []KeyValue) {
+func workerMap(reply RequestTaskReply, mapf func(string, string, string) []KeyValue) {
 	file, err := os.Open(reply.Filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", reply.Filename)
@@ -51,14 +51,14 @@ func workerMap(reply RequestTaskReply, mapf func(string, string) []KeyValue) {
 	}
 	file.Close()
 
-	keyVal := mapf(reply.Filename, string(content))
+	keyVal := mapf(reply.Filename, string(content), reply.Pattern)
 
 	nBuckets := divideIntoBuckets(keyVal, reply.NReduce)
 
 	files := make([]string, len(nBuckets))
 	// write keyval to file
 	for reduceIndex, arr := range nBuckets {
-		filename := "temp/mr-" + strconv.Itoa(reply.CurMapIndex) + "-" + strconv.Itoa(reduceIndex)
+		filename := "temp/mr-" + strconv.Itoa(reply.TaskNumber) + "-" + strconv.Itoa(reduceIndex)
 		WriteJSONToFile(filename, arr)
 		files[reduceIndex] = filename
 	}
@@ -71,13 +71,13 @@ func workerMap(reply RequestTaskReply, mapf func(string, string) []KeyValue) {
 func makeKeyArrayFromKeyValue(keyVal []KeyValue, start int, end int) []string {
 	ret := make([]string, 0, end-start+1)
 	for i := start; i < end; i++ {
-		ret = append(ret, keyVal[i].Key)
+		ret = append(ret, keyVal[i].Value)
 	}
 
 	return ret
 }
 
-func workerReduce(reply RequestTaskReply, reducef func(string, []string) string) {
+func workerReduce(reply RequestTaskReply, reducef func(string, string) string) {
 	interKeyVal	:= []KeyValue{}
 	for _, filename := range reply.ReduceFileList {
 		temp := ReadJSONFromFile(filename)
@@ -86,25 +86,13 @@ func workerReduce(reply RequestTaskReply, reducef func(string, []string) string)
 
 	sort.Sort(SortedKeyValue(interKeyVal))
 
-	var prev string
-	start := 0
-
 	// tomororw add the bullshit here
-	outputFile, _ := os.Create("mr-out-" + strconv.Itoa(reply.CurReduceIndex))
+	outputFile, _ := os.Create("mr-out-" + strconv.Itoa(reply.TaskNumber))
 
-	for i, cur := range interKeyVal {
-		if cur.Key != prev && prev != "" {
-			stringArray := makeKeyArrayFromKeyValue(interKeyVal, start, i)
-			num := reducef(prev, stringArray)
-			fmt.Fprintf(outputFile, "%v %v\n", prev, num)
-			start = i
-		}
-		prev = cur.Key
+	for _, cur := range interKeyVal {
+		outputString := reducef(cur.Key, cur.Value)
+		fmt.Fprintf(outputFile, outputString)
 	}
-
-	stringArray := makeKeyArrayFromKeyValue(interKeyVal, start, len(interKeyVal))
-	num := reducef(prev, stringArray)
-	fmt.Fprintf(outputFile, "%v %v\n", prev, num)
 
 	args := FinishedTaskArgs{nil, reply.TaskNumber, "reduce"}
 	// we need to report back to the master program
@@ -114,8 +102,8 @@ func workerReduce(reply RequestTaskReply, reducef func(string, []string) string)
 //
 // main/mrworker.go calls this function.
 //
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
+func Worker(mapf func(string, string, string) []KeyValue,
+	reducef func(string, string) string) {
 
 	for {
 		reply := CallGetTask()
@@ -143,7 +131,7 @@ func CallGetTask() RequestTaskReply {
 
 	// if no tasks, return an object telling worker process to sleep
 	if !ret {
-		return RequestTaskReply{"", nil, "sleep", 0, 0, 0, 0}
+		return RequestTaskReply{"", nil, "sleep", "", 0, 0}
 	}
 
 	return reply
@@ -168,7 +156,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
 	return false
 }
 

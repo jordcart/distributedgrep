@@ -20,10 +20,9 @@ type RequestTaskReply struct {
 	Filename       string
 	ReduceFileList []string
 	TaskType       string
+	Pattern        string
 	TaskNumber     int
 	NReduce        int
-	CurMapIndex    int
-	CurReduceIndex int
 }
 
 type FinishedTaskArgs struct {

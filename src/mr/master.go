@@ -3,7 +3,6 @@ package mr
 import "log"
 import "net"
 import "os"
-import "fmt"
 import "time"
 import "sync"
 import "errors"
@@ -29,9 +28,8 @@ type Master struct {
 	mapTasks        []MapTask
 	reduceTasks     []ReduceTask
 	nReduce         int
-	MapTaskCount    int
+	pattern         string
 	MapTasksDone    int
-	ReduceTaskCount int
 	ReduceTasksDone int
 	mu              sync.RWMutex
 }
@@ -47,14 +45,12 @@ func (m *Master) GetTask(args *ExampleArgs, reply *RequestTaskReply) error {
 				reply.Filename = currentMapTask.filename
 				reply.TaskType = "map"
 				reply.TaskNumber = i
+				reply.Pattern = m.pattern
 
 				// change state of task
 				m.mu.Lock()
 				m.mapTasks[i].state = "in-progress"
-				m.MapTaskCount++
 				m.mu.Unlock()
-				reply.CurMapIndex = m.MapTaskCount
-
 				go m.taskTimer("map", i)
 				break
 			}
@@ -66,13 +62,12 @@ func (m *Master) GetTask(args *ExampleArgs, reply *RequestTaskReply) error {
 				reply.ReduceFileList = currentReduceTask.files
 				reply.TaskType = "reduce"
 				reply.TaskNumber = i
+				reply.Pattern = m.pattern
 
 				// change state of task
 				m.mu.Lock()
 				m.reduceTasks[i].state = "in-progress"
-				m.ReduceTaskCount++
 				m.mu.Unlock()
-				reply.CurReduceIndex = m.ReduceTaskCount
 				go m.taskTimer("reduce", i)
 				break
 			}
@@ -90,17 +85,21 @@ func (m *Master) ReportFinishedTask(args *FinishedTaskArgs, reply *ExampleReply)
 
 	if args.TaskType == "map" {
 		m.mu.Lock()
-		for i, file := range args.FilesArray {
-			m.reduceTasks[i].files = append(m.reduceTasks[i].files, file)
-		}
+		if m.mapTasks[args.TaskNumber].state != "finished" {
+			for i, file := range args.FilesArray {
+				m.reduceTasks[i].files = append(m.reduceTasks[i].files, file)
+			}
 
-		m.MapTasksDone++
-		m.mapTasks[args.TaskNumber].state = "finished"
+			m.MapTasksDone++
+			m.mapTasks[args.TaskNumber].state = "finished"
+		}
 		m.mu.Unlock()
 	} else if args.TaskType == "reduce" {
 		m.mu.Lock()
-		m.ReduceTasksDone++
-		m.reduceTasks[args.TaskNumber].state = "finished"
+		if m.reduceTasks[args.TaskNumber].state != "finished" {
+			m.ReduceTasksDone++
+			m.reduceTasks[args.TaskNumber].state = "finished"
+		}
 		m.mu.Unlock()
 	}
 
@@ -115,7 +114,6 @@ func (m *Master) taskTimer(taskType string, taskNumber int) {
 		select {
 		case <- timer.C:
 			m.mu.Lock()
-			fmt.Println("times up")
 			if taskType == "map" {
 				m.mapTasks[taskNumber].state = "idle"
 			} else if taskType == "reduce" {
@@ -174,11 +172,12 @@ func (m *Master) Done() bool {
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
 //
-func MakeMaster(files []string, nReduce int) *Master {
+func MakeMaster(pattern string, files []string, nReduce int) *Master {
 	m := Master{}
 	m.mapTasks = make([]MapTask, 0, len(files))
 	m.reduceTasks = make([]ReduceTask, nReduce)
 	m.nReduce = nReduce
+	m.pattern = pattern
 
 	for i := 0; i < len(files); i++ {
 		m.mapTasks = append(m.mapTasks, MapTask{files[i], "idle", i})

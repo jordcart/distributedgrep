@@ -1,0 +1,59 @@
+#!/bin/bash
+
+set -m
+
+RACE=
+NUM_WORKERS=3
+
+if (( $# < 2 ))
+then
+    echo "Usage: ./dgrep pattern [inputfiles]..."
+    echo "Example: ./dgrep \"printf\" pg-*.txt"
+    exit 1
+fi
+
+_args=$@
+PATTERN=$1
+FILES=( "${@:2}" )
+echo $PATTERN
+echo ${FILES[*]}
+
+PROCESS_PIDS=()
+
+rm -rf build
+mkdir build || exit 1
+cd build || exit 1
+rm -f mr-*
+
+(cd ../mrapps && go build $RACE -buildmode=plugin grep.go) || exit 1
+(go build $RACE ../mrmaster.go) || exit 1
+(go build $RACE ../mrworker.go) || exit 1
+
+./mrmaster $PATTERN ../../testfiles/pg-*.txt &
+sleep 1
+PROCESS_PIDS=(${arrVar[@]} "$!")
+
+
+for (( c=0; c<$NUM_WORKERS; c++ ))
+do
+    ./mrworker ../mrapps/grep.so &
+    echo "Running process $!"
+    PROCESS_PIDS=(${arrVar[@]} "$!")
+done
+
+# wait for all processes to finish
+wait
+
+# clean up processes
+for value in "${PROCESS_PIDS[@]}"
+do
+    if ps -p $value > /dev/null
+    then
+        echo "Killing $value"
+        kill $value
+    fi
+done
+
+# remove files
+rm -rf temp
+rm -f mr-*

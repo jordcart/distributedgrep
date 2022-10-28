@@ -3,8 +3,10 @@ package main
 import "./mr"
 import "time"
 import "os"
+import "io/ioutil"
 import "fmt"
 import "regexp"
+import "strconv"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -14,6 +16,7 @@ func main() {
 
 	pattern := os.Args[1]
 	filesToGrep := os.Args[2:]
+	numReduce := 10
 
 	_, error := regexp.Compile(pattern)
 
@@ -22,9 +25,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := mr.MakeMaster(pattern, filesToGrep, 10)
+	m := mr.MakeMaster(pattern, filesToGrep, numReduce)
 	for m.Done() == false {
 		time.Sleep(time.Second)
+	}
+
+	for i := 0; i < numReduce; i++ {
+		filename := "mr-out-" + strconv.Itoa(i)
+		dat, err := ioutil.ReadFile(filename)
+		if err != nil {
+			continue
+		}
+		fmt.Print(string(dat))
 	}
 
 	time.Sleep(time.Second)
